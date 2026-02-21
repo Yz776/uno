@@ -192,8 +192,8 @@ app.get('/', (req, res) => {
     <button id="draw-btn" disabled>Ambil Kartu</button>
   </div>
 
-  <script src="/socket.io/socket.io.js"></script>
-  <script>
+<script src="https://cdn.socket.io/socket.io.min.js"></script> 
+<script>
   const socket = io({ transports: ['polling'] });
   const $ = id => document.getElementById(id);
 
