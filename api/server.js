@@ -5,7 +5,7 @@ const { Server } = require('socket.io');
 const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
-  transports: ['polling'], // Use polling for Vercel compatibility
+  transports: ['polling'],
   cors: { origin: "*" }
 });
 
@@ -49,7 +49,6 @@ function refillDeckIfNeeded(room) {
 }
 
 function dealInitialHands(room) {
-  const playerCount = room.players.length;
   room.hands = {};
   for (const player of room.players) {
     room.hands[player.id] = room.deck.splice(0, 7);
@@ -62,18 +61,11 @@ function getTopCard(room) {
 
 function canPlayOnTop(card, top, currentStack) {
   if (currentStack.value > 0) {
-    if (currentStack.type === 'draw2') {
-      return card.value === 'draw2' || card.value === 'draw4';
-    }
-    if (currentStack.type === 'draw4') {
-      return card.value === 'draw4';
-    }
+    if (currentStack.type === 'draw2') return card.value === 'draw2' || card.value === 'draw4';
+    if (currentStack.type === 'draw4') return card.value === 'draw4';
     return false;
   }
-
-  return card.color === top.color ||
-         card.value === top.value ||
-         card.color === 'wild';
+  return card.color === top.color || card.value === top.value || card.color === 'wild';
 }
 
 function nextPlayerIndex(room) {
@@ -106,13 +98,13 @@ function startTurnTimer(roomId) {
 
     if (room.turnRemaining <= 0) {
       clearInterval(room.turnTimer);
-      const currentPlayerId = room.players[room.currentTurn].id;
+      const pid = room.players[room.currentTurn].id;
 
       if (room.stack.value > 0) {
-        forceDraw(room, currentPlayerId, room.stack.value);
+        forceDraw(room, pid, room.stack.value);
         room.stack = { value: 0, type: null };
       } else {
-        forceDraw(room, currentPlayerId, 1);
+        forceDraw(room, pid, 1);
       }
 
       advanceTurn(room);
@@ -125,7 +117,6 @@ function startTurnTimer(roomId) {
 function broadcastState(roomId) {
   const room = rooms[roomId];
   if (!room) return;
-
   const top = getTopCard(room);
 
   for (const player of room.players) {
@@ -147,16 +138,13 @@ function broadcastState(roomId) {
 }
 
 function checkWinCondition(room, playerId) {
-  if (room.hands[playerId].length === 0) {
-    let winnerMsg = `Player ${playerId.substring(0,6)} menang!`;
-
+  if (room.hands[playerId]?.length === 0) {
+    let msg = `Pemain ${playerId.substring(0,6)} menang!`;
     if (room.players.length === 4) {
       const idx = room.players.findIndex(p => p.id === playerId);
-      const team = (idx === 0 || idx === 2) ? 'Tim A' : 'Tim B';
-      winnerMsg = `${team} menang!`;
+      msg = (idx === 0 || idx === 2) ? 'Tim A menang!' : 'Tim B menang!';
     }
-
-    io.to(room.roomId).emit('gameover', { message: winnerMsg, winner: playerId });
+    io.to(room.roomId).emit('gameover', { message: msg, winner: playerId });
     clearInterval(room.turnTimer);
     delete rooms[room.roomId];
     return true;
@@ -164,9 +152,12 @@ function checkWinCondition(room, playerId) {
   return false;
 }
 
+// ────────────────────────────────────────────────
+// HALAMAN UTAMA (HTML + CLIENT JS)
+// ────────────────────────────────────────────────
+
 app.get('/', (req, res) => {
-  res.type('html').send(`
-<!DOCTYPE html>
+  res.type('html').send(`<!DOCTYPE html>
 <html lang="id">
 <head>
   <meta charset="UTF-8">
@@ -175,124 +166,116 @@ app.get('/', (req, res) => {
   <style>
     body{font-family:Arial,sans-serif;background:#111;color:#eee;text-align:center;margin:0;padding:10px}
     h1{color:#ffeb3b}
-    #room-create{margin:20px}
+    #lobby{margin:40px}
     #game{display:none}
     .card{display:inline-block;width:70px;height:100px;margin:6px;border-radius:8px;color:#000;font-weight:bold;font-size:18px;line-height:100px;cursor:pointer;transition:transform .15s}
     .card:hover{transform:scale(1.08)}
-    .red{background:#d32f2f}
-    .yellow{background:#fbc02d}
-    .green{background:#388e3c}
-    .blue{background:#1976d2}
-    .wild{background:#000;color:#fff}
+    .red{background:#d32f2f}.yellow{background:#fbc02d}.green{background:#388e3c}.blue{background:#1976d2}.wild{background:#000;color:#fff}
     #my-hand{margin:20px auto;max-width:90vw;overflow-x:auto;white-space:nowrap}
     #top-card{margin:20px}
-    #status{font-size:1.2em;margin:10px}
-    #timer{color:#ff9800;font-weight:bold}
+    #timer{color:#ff9800;font-weight:bold;font-size:1.3em}
     #draw-btn{background:#555;color:white;border:none;padding:12px 24px;font-size:1.1em;border-radius:8px;cursor:pointer;margin:15px}
     #draw-btn:disabled{opacity:0.5;cursor:not-allowed}
   </style>
 </head>
 <body>
   <h1>UNO Online</h1>
-
   <div id="lobby">
-    <input id="room-code" placeholder="Masukkan kode ruangan (kosong = buat baru)" style="padding:10px;font-size:1.1em;width:280px">
-    <button id="join" style="padding:10px 20px;font-size:1.1em">Gabung / Buat</button>
+    <input id="room-code" placeholder="Kode ruangan (kosong = buat baru)" style="padding:12px;font-size:1.1em;width:300px">
+    <button id="join" style="padding:12px 24px;font-size:1.1em;margin-left:10px">Gabung / Buat</button>
   </div>
-
   <div id="game">
-    <div id="opponents"></div>
+    <div id="opponents" style="margin:20px;font-size:1.1em"></div>
     <div id="top-card"></div>
-    <div id="status">Giliran: <span id="current-player">...</span></div>
-    <div id="timer">15</div>
+    <div id="timer">Menunggu giliran...</div>
     <div id="my-hand"></div>
-    <button id="draw-btn">Ambil Kartu</button>
+    <button id="draw-btn" disabled>Ambil Kartu</button>
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
-  const socket = io({
-    transports: ['polling'] // Use polling for Vercel
-  });
-  let myId = null;
-
+  const socket = io({ transports: ['polling'] });
   const $ = id => document.getElementById(id);
-  const lobby = $('lobby');
-  const game = $('game');
 
-  $('join').onclick = () => {
+  $('join').onclick = function() {
     const code = $('room-code').value.trim();
     socket.emit('join', code || null);
   };
 
-  socket.on('joined', roomId => {
-    lobby.style.display = 'none';
-    game.style.display = 'block';
-    console.log('Bergabung di ruangan:', roomId);
+  socket.on('joined', function() {
+    $('lobby').style.display = 'none';
+    $('game').style.display = 'block';
   });
 
-  socket.on('state', data => {
-    myId = socket.id;
+  socket.on('state', function(data) {
+    var handHtml = '';
+    data.myHand.forEach(function(c) {
+      var val = (c.value === 'draw2') ? '+2' :
+                (c.value === 'draw4') ? '+4' :
+                (c.value || c.color || '?');
+      var safeJson = JSON.stringify(c).replace(/'/g, "\\\\'");
+      handHtml += '<div class="card ' + c.color + '" data-card=\\'' + safeJson + '\\'>' + val + '</div>';
+    });
+    $('my-hand').innerHTML = handHtml;
 
-    $('my-hand').innerHTML = data.myHand.map(c => 
-      `<div class="card ${c.color}" data-card='${JSON.stringify(c)}'>
-        ${c.value==='draw2'?'+2':c.value==='draw4'?'+4':c.value}
-      </div>`
-    ).join('');
+    var t = data.topCard;
+    var topVal = (t.value === 'draw2') ? '+2' :
+                 (t.value === 'draw4') ? '+4' :
+                 (t.value || t.color || '?');
+    $('top-card').innerHTML = '<div class="card ' + t.color + '">' + topVal + '</div>';
 
-    const t = data.topCard;
-    $('top-card').innerHTML = `
-      <div class="card ${t.color}">
-        ${t.value==='draw2'?'+2':t.value==='draw4'?'+4':t.value}
-      </div>
-    `;
-
-    $('current-player').textContent = data.currentPlayerId === myId ? 'KAMU' : data.currentPlayerId.substring(0,6);
-    $('timer').textContent = data.myTurn ? 'Giliranmu!' : '';
-
+    $('timer').textContent = data.myTurn ? 'Giliranmu! → 15 detik' : 'Menunggu...';
     $('draw-btn').disabled = !data.myTurn;
 
-    $('opponents').innerHTML = data.opponents.map(o => 
-      `Pemain ${o.id} : ${o.count} kartu<br>`
-    ).join('');
+    var oppHtml = '';
+    data.opponents.forEach(function(o) {
+      oppHtml += 'Pemain ' + o.id + ': ' + o.count + ' kartu<br>';
+    });
+    $('opponents').innerHTML = oppHtml;
 
-    document.querySelectorAll('#my-hand .card').forEach(el => {
-      el.onclick = () => {
+    document.querySelectorAll('#my-hand .card').forEach(function(el) {
+      el.onclick = function() {
         if (!data.myTurn) return;
-        const card = JSON.parse(el.dataset.card);
+        var cardStr = el.getAttribute('data-card');
+        var card = JSON.parse(cardStr);
         socket.emit('play', card);
       };
     });
   });
 
-  socket.on('timer', sec => {
-    $('timer').textContent = sec > 0 ? `${sec} detik` : 'Waktu habis!';
+  socket.on('timer', function(sec) {
+    if (sec > 0) $('timer').textContent = 'Sisa waktu: ' + sec + ' detik';
   });
 
-  socket.on('gameover', data => {
+  socket.on('gameover', function(data) {
     alert(data.message);
     location.reload();
   });
 
-  $('draw-btn').onclick = () => socket.emit('draw');
+  $('draw-btn').onclick = function() {
+    socket.emit('draw');
+  };
 
-  window.giveMeBestCards = () => {
+  window.giveMeBestCards = function() {
     socket.emit('debug-godhand');
   };
   </script>
 </body>
-</html>
-  `);
+</html>`);
 });
 
-io.on('connection', socket => {
-  socket.on('join', requestedRoom => {
+// ────────────────────────────────────────────────
+// SOCKET.IO LOGIC
+// ────────────────────────────────────────────────
+
+io.on('connection', function(socket) {
+  socket.on('join', function(requestedRoom) {
     let roomId = requestedRoom;
 
     if (!roomId) {
       roomId = 'r' + (nextRoomId++);
       rooms[roomId] = {
-        roomId,
+        roomId: roomId,
         players: [],
         deck: shuffle(createFreshDeck()),
         discard: [],
@@ -326,7 +309,7 @@ io.on('connection', socket => {
     }
   });
 
-  socket.on('play', card => {
+  socket.on('play', function(card) {
     const room = Object.values(rooms).find(r => r.players.some(p => p.id === socket.id));
     if (!room) return;
 
@@ -358,9 +341,8 @@ io.on('connection', socket => {
       room.stack.type = 'draw4';
     }
 
-    if (card.color === 'wild' && card.colorChosen) {
-      room.discard[room.discard.length-1].color = card.colorChosen;
-    }
+    // Catatan: warna wild dipilih client-side, tapi di sini kita skip logic warna untuk simplifikasi
+    // Kalau mau full, tambah emit 'chooseColor' dan handler terpisah
 
     if (checkWinCondition(room, playerId)) return;
 
@@ -380,7 +362,7 @@ io.on('connection', socket => {
     startTurnTimer(room.roomId);
   });
 
-  socket.on('draw', () => {
+  socket.on('draw', function() {
     const room = Object.values(rooms).find(r => r.players.some(p => p.id === socket.id));
     if (!room) return;
 
@@ -399,7 +381,7 @@ io.on('connection', socket => {
     startTurnTimer(room.roomId);
   });
 
-  socket.on('debug-godhand', () => {
+  socket.on('debug-godhand', function() {
     const room = Object.values(rooms).find(r => r.players.some(p => p.id === socket.id));
     if (!room) return;
 
@@ -416,7 +398,7 @@ io.on('connection', socket => {
     broadcastState(room.roomId);
   });
 
-  socket.on('disconnect', () => {
+  socket.on('disconnect', function() {
     for (const roomId in rooms) {
       const room = rooms[roomId];
       const idx = room.players.findIndex(p => p.id === socket.id);
@@ -439,7 +421,7 @@ io.on('connection', socket => {
   });
 });
 
-// For Vercel serverless
+// Untuk Vercel serverless
 module.exports = (req, res) => {
   app(req, res);
 };
